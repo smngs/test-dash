@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="utf-8" />
+    <title>Custom ABR Rules</title>
+
+    <script src="dash.all.debug.js"></script>
+    <!--dash.all.min.js should be used in production over dash.all.debug.js
+        Debug files are not compressed or obfuscated making the file size much larger compared with dash.all.min.js-->
+    <!--<script src="../../dist/dash.all.min.js"></script>-->
+
+    <script class="testrule">
+
+    </script>
+
+    <script class="code">
+      function init() {
+        var video,
+        player,
+        url = "http://localhost:8000/4sec/BigBuckBunny_4s_onDemand_2014_05_09.mpd";
+
+        video = document.querySelector("video");
+        player = dashjs.MediaPlayer().create();
+        player.initialize(video, url, true);
+        player.on(dashjs.MediaPlayer.events["PLAYBACK_ENDED"], function () {
+          clearInterval(eventPoller);
+          clearInterval(bitrateCalculator);
+        });
+
+        var eventPoller = setInterval(function () {
+          var streamInfo = player.getActiveStream().getStreamInfo();
+          var dashMetrics = player.getDashMetrics();
+          var dashAdapter = player.getDashAdapter();
+
+          if (dashMetrics && streamInfo) {
+            const periodIdx = streamInfo.index;
+            var repSwitch = dashMetrics.getCurrentRepresentationSwitch('video', true);
+            var bufferLevel = dashMetrics.getCurrentBufferLevel('video', true);
+            console.log(bufferLevel);
+            var bitrate = repSwitch ? Math.round(dashAdapter.getBandwidthForRepresentation(repSwitch.to, periodIdx) / 1000) : NaN;
+            var adaptation = dashAdapter.getAdaptationForType(periodIdx, 'video', streamInfo)
+            var frameRate = adaptation.Representation_asArray.find(function (rep) {
+              return rep.id === repSwitch.to
+            }).frameRate;
+            document.getElementById('bufferLevel').innerText = bufferLevel + " secs";
+            document.getElementById('framerate').innerText = frameRate + " fps";
+            document.getElementById('reportedBitrate').innerText = bitrate + " Kbps";
+          }
+        }, 1000);
+
+        if (video.webkitVideoDecodedByteCount !== undefined) {
+          var lastDecodedByteCount = 0;
+          const bitrateInterval = 5;
+          var bitrateCalculator = setInterval(function () {
+            var calculatedBitrate = (((video.webkitVideoDecodedByteCount - lastDecodedByteCount) / 1000) * 8) / bitrateInterval;
+            document.getElementById('calculatedBitrate').innerText = Math.round(calculatedBitrate) + " Kbps";
+            lastDecodedByteCount = video.webkitVideoDecodedByteCount;
+          }, bitrateInterval * 1000);
+        } else {
+          document.getElementById('chrome-only').style.display = "none";
+        }
+
+
+        /* don't use dash.js default rules */
+        player.updateSettings({
+          'streaming': {
+            'abr': {
+              'useDefaultABRRules': false
+            }
+          }
+        });
+
+        var CustomThroughputRule;
+
+        function CustomThroughputRuleClass() {
+
+          let factory = dashjs.FactoryMaker;
+          let SwitchRequest = factory.getClassFactoryByName('SwitchRequest');
+          let MetricsModel = factory.getSingletonFactoryByName('MetricsModel');
+          let StreamController = factory.getSingletonFactoryByName('StreamController');
+
+
+          let Debug = factory.getSingletonFactoryByName('Debug');
+
+          let context = this.context;
+          let instance,
+            logger;
+
+          function setup() {
+            logger = Debug(context).getInstance().getLogger(instance);
+          }
+
+          function getMaxIndex(rulesContext) {
+
+            let streamController = StreamController(context).getInstance();
+            let abrController = rulesContext.getAbrController();
+
+            let switchRequest = SwitchRequest(context).create();
+
+            // here you can get some informations aboit metrics for example, to implement the rule
+            let metricsModel = MetricsModel(context).getInstance();
+            var mediaType = rulesContext.getMediaInfo().type;
+            var metrics = metricsModel.getMetricsFor(mediaType, true);
+
+            console.log(metrics);
+
+            // this sample only display metrics in console
+
+            // Get current bitrate
+
+            try {
+              var bufferLength = metrics.BufferLevel[metrics.BufferLevel.length - 1].level;
+            } catch (TypeError) {
+              var bufferLength = 0.0
+            }
+
+            console.log(bufferLength);
+
+            // if (bufferLength < 15000.0) {
+            //     switchRequest.quality = 0;
+            // } else {
+            //     switchRequest.quality = 9;
+            // }
+
+            // if(bufferLevel<90.0){
+            //     switchRequest.quality=0
+            // }else{
+            //     switchRequest.quality=9
+            // }
+
+            switchRequest.quality=9
+
+            // console.log(abrController.getQualityFor(mediaType, streamController.getActiveStreamInfo()))
+
+            // //console.log(bufferLevel);
+            // if(abrController.getQualityFor(mediaType, streamController.getActiveStreamInfo())<9){
+            // switchRequest.quality=abrController.getQualityFor(mediaType, streamController.getActiveStreamInfo())+1;
+            //  //console.log(bufferLevel);
+
+            //  //console.log(metrics.Buff)
+            // }else{
+            //     switchRequest.quality=abrController.getQualityFor(mediaType, streamController.getActiveStreamInfo())-9;
+            // }
+            switchRequest.reason = 'Always switching to the lowest bitrate';
+            switchRequest.priority = SwitchRequest.PRIORITY.STRONG;
+            return switchRequest;
+          }
+
+          instance = {
+            getMaxIndex: getMaxIndex
+          };
+
+          setup();
+
+          return instance;
+        }
+
+        CustomThroughputRuleClass.__dashjs_factory_name = 'CustomThroughputRule';
+        CustomThroughputRule = dashjs.FactoryMaker.getClassFactory(CustomThroughputRuleClass);
+
+        /* add my custom quality switch rule. Look at LowestBitrateRule.js to know more */
+        /* about the structure of a custom rule */
+        player.addABRCustomRule('qualitySwitchRules', 'CustomThroughputRule', CustomThroughputRule);
+
+        player.initialize(video, url, true);
+      }
+    </script>
+
+    <style>
+      video {
+        width: 640px;
+        height: 360px;
+      }
+
+      #container {
+        display: inline-block;
+      }
+
+      #container>div {
+        display: inline-block;
+        float: left;
+        margin-right: 10px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="container">
+      <div class="video-container">
+        <video data-dashjs-player autoplay controls="true">
+        </video>
+      </div>
+      <div>
+        <strong>Reported bitrate:</strong>
+        <span id="reportedBitrate"></span>
+        <br />
+        <strong>Buffer level:</strong>
+        <span id="bufferLevel"></span>
+        <div id="chrome-only">
+          <strong>Calculated bitrate:</strong>
+          <span id="calculatedBitrate"></span>
+        </div>
+        <strong>Framerate:</strong>
+        <span id="framerate"></span>
+      </div>
+    </div>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        init();
+      });
+    </script>
+    <script src="../highlighter.js"></script>
+  </body>
+
+</html>

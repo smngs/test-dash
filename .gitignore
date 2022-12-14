@@ -1,0 +1,3 @@
+data/**
+!data/test.html
+!data/dash.all.debug.js
